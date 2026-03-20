@@ -7,61 +7,67 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 bot = Bot(token=TELEGRAM_TOKEN)
 
 CHAT_ID = None
-
 symbols = ["BTCUSDT", "ETHUSDT"]
-
 last_prices = {}
 
-# 获取价格
-def get_price(symbol):
-    url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
-    return float(requests.get(url).json()['price'])
+def safe_request(url):
+    try:
+        return requests.get(url).json()
+    except:
+        return None
 
-# 获取最近成交（用于检测大单）
+def get_price(symbol):
+    data = safe_request(f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}")
+    if data and 'price' in data:
+        return float(data['price'])
+    return None
+
 def get_trades(symbol):
-    url = f"https://api.binance.com/api/v3/trades?symbol={symbol}&limit=50"
-    return requests.get(url).json()
+    return safe_request(f"https://api.binance.com/api/v3/trades?symbol={symbol}&limit=20") or []
 
 async def monitor():
     global CHAT_ID
 
     while True:
-        for symbol in symbols:
-            price = get_price(symbol)
-            trades = get_trades(symbol)
+        try:
+            for symbol in symbols:
+                price = get_price(symbol)
+                if not price:
+                    continue
 
-            # ===== 价格监控 =====
-            if symbol in last_prices:
-                change = (price - last_prices[symbol]) / last_prices[symbol]
+                trades = get_trades(symbol)
 
-                if change > 0.01:
-                    msg = f"🚨 {symbol}上涨\n价格: {price}\n👉 可能突破"
-                    await bot.send_message(chat_id=CHAT_ID, text=msg)
+                # ===== 价格监控 =====
+                if symbol in last_prices:
+                    change = (price - last_prices[symbol]) / last_prices[symbol]
 
-                elif change < -0.01:
-                    msg = f"⚠️ {symbol}下跌\n价格: {price}\n👉 注意风险"
-                    await bot.send_message(chat_id=CHAT_ID, text=msg)
+                    if abs(change) > 0.01 and CHAT_ID:
+                        msg = f"{symbol} 变动 {round(change*100,2)}%\n价格: {price}"
+                        await bot.send_message(chat_id=CHAT_ID, text=msg)
 
-            last_prices[symbol] = price
+                last_prices[symbol] = price
 
-            # ===== 主力大单检测 =====
-            for trade in trades:
-                qty = float(trade['qty'])
-                trade_price = float(trade['price'])
-                value = qty * trade_price
+                # ===== 大单检测 =====
+                for trade in trades:
+                    try:
+                        qty = float(trade['qty'])
+                        trade_price = float(trade['price'])
+                        value = qty * trade_price
 
-                if value > 100000:  # 10万U大单
-                    side = "买入" if not trade['isBuyerMaker'] else "卖出"
+                        if value > 100000 and CHAT_ID:
+                            side = "买入" if not trade['isBuyerMaker'] else "卖出"
 
-                    msg = (
-                        f"🐋 {symbol}大单{side}\n"
-                        f"价格: {trade_price}\n"
-                        f"金额: {int(value)} USDT"
-                    )
+                            msg = f"🐋 {symbol}大单{side}\n价格:{trade_price}\n金额:{int(value)}U"
+                            await bot.send_message(chat_id=CHAT_ID, text=msg)
 
-                    await bot.send_message(chat_id=CHAT_ID, text=msg)
+                    except:
+                        continue
 
-        await asyncio.sleep(10)
+            await asyncio.sleep(20)
+
+        except Exception as e:
+            print("错误:", e)
+            await asyncio.sleep(10)
 
 async def main():
     global CHAT_ID
