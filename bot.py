@@ -4,6 +4,10 @@ import asyncio
 from telegram import Bot
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+
+if not TELEGRAM_TOKEN:
+    raise RuntimeError("TELEGRAM_TOKEN environment variable is required")
+
 bot = Bot(token=TELEGRAM_TOKEN)
 
 CHAT_ID = None
@@ -12,8 +16,10 @@ last_prices = {}
 
 def safe_request(url):
     try:
-        return requests.get(url).json()
-    except:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except Exception:
         return None
 
 def get_price(symbol):
